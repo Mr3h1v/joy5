@@ -43,13 +43,13 @@ func (gc *gopCache) curSnapshot() *gopCacheSnapshot {
 }
 
 type gopCacheReadCursor struct {
-	lastidx int
+	lastIdx int
 }
 
 func (rc *gopCacheReadCursor) advance(cur *gopCacheSnapshot) []av.Packet {
-	lastidx := rc.lastidx
-	rc.lastidx = cur.idx
-	if diff := cur.idx - lastidx; diff <= len(cur.pkts) {
+	lastIdx := rc.lastIdx
+	rc.lastIdx = cur.idx
+	if diff := cur.idx - lastIdx; diff <= len(cur.pkts) {
 		return cur.pkts[len(cur.pkts)-diff:]
 	} else {
 		return cur.pkts
@@ -63,9 +63,9 @@ type mergeSeqhdr struct {
 
 func (m *mergeSeqhdr) do(pkt av.Packet) {
 	switch pkt.Type {
-	case av.H264DecoderConfig:
+	case av.H264DecoderConfig, av.H265DecoderConfig, av.ExH265DecConfig:
 		m.hdrpkt.VSeqHdr = append([]byte(nil), pkt.Data...)
-	case av.H264:
+	case av.H264, av.H265, av.ExH265:
 		pkt.Metadata = m.hdrpkt.Metadata
 		if pkt.IsKeyFrame {
 			pkt.VSeqHdr = m.hdrpkt.VSeqHdr
@@ -85,10 +85,11 @@ func (m *mergeSeqhdr) do(pkt av.Packet) {
 type splitSeqhdr struct {
 	cb     func(av.Packet) error
 	hdrpkt av.Packet
+	count  int
 }
 
-func (s *splitSeqhdr) sendmeta(pkt av.Packet) error {
-	if bytes.Compare(s.hdrpkt.Metadata, pkt.Metadata) != 0 {
+func (s *splitSeqhdr) sendMeta(pkt av.Packet) error {
+	if !bytes.Equal(s.hdrpkt.Metadata, pkt.Metadata) {
 		if err := s.cb(av.Packet{
 			Type: av.Metadata,
 			Data: pkt.Metadata,
@@ -103,11 +104,11 @@ func (s *splitSeqhdr) sendmeta(pkt av.Packet) error {
 func (s *splitSeqhdr) do(pkt av.Packet) error {
 	switch pkt.Type {
 	case av.H264:
-		if err := s.sendmeta(pkt); err != nil {
+		if err := s.sendMeta(pkt); err != nil {
 			return err
 		}
 		if pkt.IsKeyFrame {
-			if bytes.Compare(s.hdrpkt.VSeqHdr, pkt.VSeqHdr) != 0 {
+			if !bytes.Equal(s.hdrpkt.VSeqHdr, pkt.VSeqHdr) {
 				if err := s.cb(av.Packet{
 					Type: av.H264DecoderConfig,
 					Data: pkt.VSeqHdr,
@@ -118,11 +119,45 @@ func (s *splitSeqhdr) do(pkt av.Packet) error {
 			}
 		}
 		return s.cb(pkt)
-	case av.AAC:
-		if err := s.sendmeta(pkt); err != nil {
+	case av.H265:
+		if err := s.sendMeta(pkt); err != nil {
 			return err
 		}
-		if bytes.Compare(s.hdrpkt.ASeqHdr, pkt.ASeqHdr) != 0 {
+		if pkt.IsKeyFrame {
+			if !bytes.Equal(s.hdrpkt.VSeqHdr, pkt.VSeqHdr) {
+				if err := s.cb(av.Packet{
+					Type: av.H265DecoderConfig,
+					Data: pkt.VSeqHdr,
+				}); err != nil {
+					return err
+				}
+				s.hdrpkt.VSeqHdr = pkt.VSeqHdr
+			}
+		}
+		s.count++
+		return s.cb(pkt)
+	case av.ExH265:
+		if err := s.sendMeta(pkt); err != nil {
+			return err
+		}
+		if pkt.IsKeyFrame {
+			if !bytes.Equal(s.hdrpkt.VSeqHdr, pkt.VSeqHdr) {
+				if err := s.cb(av.Packet{
+					Type: av.ExH265DecConfig,
+					Data: pkt.VSeqHdr,
+				}); err != nil {
+					return err
+				}
+				s.hdrpkt.VSeqHdr = pkt.VSeqHdr
+			}
+		}
+		s.count++
+		return s.cb(pkt)
+	case av.AAC:
+		if err := s.sendMeta(pkt); err != nil {
+			return err
+		}
+		if !bytes.Equal(s.hdrpkt.ASeqHdr, pkt.ASeqHdr) {
 			if err := s.cb(av.Packet{
 				Type: av.AACDecoderConfig,
 				Data: pkt.ASeqHdr,
@@ -299,7 +334,6 @@ func doPubsubRtmp(listenAddr string) error {
 	}
 
 	s := rtmp.NewServer()
-	handleRtmpServerFlags(s)
 
 	streams := newStreams()
 
@@ -328,5 +362,8 @@ func doPubsubRtmp(listenAddr string) error {
 		go s.HandleNetConn(nc)
 	}
 
-	return nil
+}
+
+func main() {
+	doPubsubRtmp(":1935")
 }
