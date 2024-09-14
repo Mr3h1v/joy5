@@ -61,7 +61,8 @@ func (t *Client) doDial(host string) (nc net.Conn, err error) {
 	if fn := t.NewDialFunc; fn != nil {
 		dial = fn()
 	}
-	ctx, _ := context.WithTimeout(context.Background(), time.Second*15)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*15)
+	defer cancel()
 	if nc, err = dial(ctx, "tcp", host); err != nil {
 		return
 	}
