@@ -2,6 +2,7 @@ package rtmp
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/nareix/joy5/av"
 	"github.com/nareix/joy5/format/flv"
@@ -400,6 +401,9 @@ func (c *Conn) connectPublish() (err error) {
 	}
 
 	transid++
+	if strings.HasSuffix(c.URL.Hostname(), "youtube.com") {
+		connectpath = "live"
+	}
 	if err = c.writeCommand(4, c.avmsgsid, "publish", transid, nil, publishpath, connectpath); err != nil {
 		return
 	}
