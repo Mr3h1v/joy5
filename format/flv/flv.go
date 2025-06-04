@@ -116,7 +116,7 @@ func WritePacket(pkt av.Packet, writeTag func(flvio.Tag) error, publishing bool)
 		tag.Data = pkt.Data
 		return writeTag(tag)
 
-	case av.H264DecoderConfig:
+	case av.H264DecoderConfig, av.H265DecoderConfig, av.ExH265DecConfig:
 		tag := flvio.Tag{
 			Type:          flvio.TAG_VIDEO,
 			FrameType:     flvio.FRAME_KEY,
@@ -125,9 +125,15 @@ func WritePacket(pkt av.Packet, writeTag func(flvio.Tag) error, publishing bool)
 			Data:          pkt.Data,
 			Time:          uint32(flvio.TimeToTs(pkt.Time)),
 		}
+		if pkt.Type == av.H265DecoderConfig {
+			tag.VideoFormat = flvio.VIDEO_H265
+		} else if pkt.Type == av.ExH265DecConfig {
+			tag.IsExHeader = 1
+			tag.FourCC = flvio.VIDEO_EX_H265
+		}
 		return writeTag(tag)
 
-	case av.H264:
+	case av.H264, av.H265, av.ExH265:
 		tag := flvio.Tag{
 			Type:          flvio.TAG_VIDEO,
 			AVCPacketType: flvio.AVC_NALU,
@@ -138,6 +144,13 @@ func WritePacket(pkt av.Packet, writeTag func(flvio.Tag) error, publishing bool)
 			tag.FrameType = flvio.FRAME_KEY
 		} else {
 			tag.FrameType = flvio.FRAME_INTER
+		}
+
+		if pkt.Type == av.H265 {
+			tag.VideoFormat = flvio.VIDEO_H265
+		} else if pkt.Type == av.ExH265 {
+			tag.IsExHeader = 1
+			tag.FourCC = flvio.VIDEO_EX_H265
 		}
 		tag.Time = uint32(flvio.TimeToTs(pkt.Time))
 		tag.Data = pkt.Data
@@ -235,6 +248,30 @@ func ReadPacket(readTag func() (flvio.Tag, error)) (pkt av.Packet, err error) {
 			return
 		}
 
+		if tag.IsExHeader == 1 && tag.Type == flvio.TAG_VIDEO {
+			switch tag.FourCC {
+			case flvio.VIDEO_EX_H265:
+				switch tag.AVCPacketType {
+				case flvio.AVC_SEQHDR:
+					pkt = av.Packet{
+						Type: av.ExH265DecConfig,
+						Data: tag.Data,
+					}
+					return
+				case flvio.AVC_NALU, 3:
+					pkt = av.Packet{
+						Type:       av.ExH265,
+						Data:       tag.Data,
+						Time:       flvio.TsToTime(int64(tag.Time)),
+						CTime:      flvio.TsToTime(int64(tag.CTime)),
+						IsKeyFrame: tag.FrameType == flvio.FRAME_KEY,
+					}
+					return
+				}
+			}
+			return
+		}
+
 		switch tag.Type {
 		case flvio.TAG_AMF0, flvio.TAG_AMF3:
 			data := convertToAMF0Metadata(tag.Data, tag.Type == flvio.TAG_AMF3)
@@ -249,17 +286,42 @@ func ReadPacket(readTag func() (flvio.Tag, error)) (pkt av.Packet, err error) {
 
 		case flvio.TAG_VIDEO:
 			switch tag.VideoFormat {
-			case flvio.VIDEO_H264:
+			case flvio.VIDEO_H264, flvio.VIDEO_H265:
 				switch tag.AVCPacketType {
 				case flvio.AVC_SEQHDR:
 					pkt = av.Packet{
 						Type: av.H264DecoderConfig,
 						Data: tag.Data,
 					}
+					if tag.VideoFormat == flvio.VIDEO_H265 {
+						pkt.Type = av.H265DecoderConfig
+					}
 					return
 				case flvio.AVC_NALU:
 					pkt = av.Packet{
 						Type:       av.H264,
+						Data:       tag.Data,
+						Time:       flvio.TsToTime(int64(tag.Time)),
+						CTime:      flvio.TsToTime(int64(tag.CTime)),
+						IsKeyFrame: tag.FrameType == flvio.FRAME_KEY,
+					}
+					if tag.VideoFormat == flvio.VIDEO_H265 {
+						pkt.Type = av.H265
+					}
+					return
+				}
+			}
+			if tag.FourCC == flvio.VIDEO_EX_H265 {
+				switch tag.AVCPacketType {
+				case flvio.AVC_SEQHDR:
+					pkt = av.Packet{
+						Type: av.ExH265DecConfig,
+						Data: tag.Data,
+					}
+					return
+				case flvio.AVC_NALU:
+					pkt = av.Packet{
+						Type:       av.ExH265,
 						Data:       tag.Data,
 						Time:       flvio.TsToTime(int64(tag.Time)),
 						CTime:      flvio.TsToTime(int64(tag.CTime)),

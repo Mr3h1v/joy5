@@ -83,10 +83,13 @@ const (
 
 	VIDEO_H264 = 7
 	VIDEO_H265 = 12
+
+	VIDEO_EX_H265 = 0x68766331 // "hvc1"
 )
 
 type Tag struct {
-	Type uint8
+	IsExHeader uint8
+	Type       uint8
 
 	/*
 		SoundFormat: UB[4]
@@ -176,6 +179,7 @@ type Tag struct {
 	CTime int32
 
 	StreamId uint32
+	FourCC   uint32
 
 	Header, Data []byte
 }
@@ -260,7 +264,28 @@ func (t *Tag) parseVideoHeader(b []byte) (n int, err error) {
 	if flags, err = pio.ReadU8(b, &n); err != nil {
 		return
 	}
-	t.FrameType = flags >> 4
+	t.IsExHeader = flags >> 7
+	t.FrameType = (flags >> 4) & 0x7
+	if t.IsExHeader == 1 {
+		t.AVCPacketType = flags & 0xf
+		var v uint32
+		if v, err = pio.ReadU32BE(b, &n); err != nil {
+			return
+		}
+		if v == VIDEO_EX_H265 {
+			t.FourCC = v
+		}
+		if t.AVCPacketType == 1 {
+			var v int32
+			if v, err = pio.ReadI24BE(b, &n); err != nil {
+				return
+			}
+			t.CTime = v
+		}
+		return
+	}
+
+	// non enhanced, fallback
 	t.VideoFormat = flags & 0xf
 
 	switch t.VideoFormat {
@@ -279,6 +304,15 @@ func (t *Tag) parseVideoHeader(b []byte) (n int, err error) {
 }
 
 func (t Tag) fillVideoHeader(b []byte) (n int) {
+	if t.IsExHeader == 1 {
+		flag := t.IsExHeader<<7 | t.FrameType<<4 | t.AVCPacketType
+		pio.WriteU8(b, &n, flag)
+		pio.WriteU32BE(b, &n, t.FourCC)
+		if t.AVCPacketType == 1 {
+			pio.WriteI24BE(b, &n, int32(t.CTime))
+		}
+		return
+	}
 	pio.WriteU8(b, &n, t.FrameType<<4|t.VideoFormat)
 
 	switch t.VideoFormat {

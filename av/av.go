@@ -15,6 +15,10 @@ const (
 	H264SPSPPSNALU
 	AACDecoderConfig
 	Metadata
+	H265
+	H265DecoderConfig
+	ExH265
+	ExH265DecConfig
 )
 
 var PacketTypeString = map[int]string{
@@ -24,6 +28,10 @@ var PacketTypeString = map[int]string{
 	H264SPSPPSNALU:    "H264SPSPPSNALU",
 	AACDecoderConfig:  "AACDecoderConfig",
 	Metadata:          "Metadata",
+	H265:              "H265",
+	H265DecoderConfig: "H265DecoderConfig",
+	ExH265:            "ExH265",
+	ExH265DecConfig:   "ExH265DecoderConfig",
 }
 
 type Packet struct {
